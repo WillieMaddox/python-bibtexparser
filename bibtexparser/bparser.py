@@ -84,6 +84,16 @@ class BibTexParser(object):
         # hangs We are going to default to utf8, and mandate it.
         self.encoding = 'utf8'
 
+        # Some bibtex files have authors and/or keywords listed as individual key entries.
+        # Allows _parse_record to append multiple values to a key
+        self.allow_multi = True
+
+        # pre-defined set of multi keys
+        self.multi_keys = ('author', 'keyword')
+        
+        # separators for authors and keywords.
+        self.multi_keys_sep = {'author':' and ', 'keyword':', '}
+        
         # pre-defined set of key changes
         self.alt_dict = {
             'keyw': 'keyword',
@@ -96,6 +106,10 @@ class BibTexParser(object):
             'subjects': 'subject'
         }
 
+        self.standard_bibtypes = ('article', 'book', 'booklet', 'conference', 'inbook', 'incollection', 
+                                  'inproceedings', 'manual', 'mastersthesis', 'misc', 'phdthesis', 
+                                  'proceedings', 'techreport', 'unpublished')
+        
         self.replace_all_re = re.compile(r'((?P<pre>"?)\s*(#|^)\s*(?P<id>[^\d\W]\w*)\s*(#|$)\s*(?P<post>"?))', re.UNICODE)
 
     def _bibtex_file_obj(self, bibtex_str):
@@ -187,43 +201,43 @@ class BibTexParser(object):
         d = {}
 
         if not record.startswith('@'):
-            logger.debug('The record does not start with @. Return empty dict.')
+#             logger.debug('The record does not start with @. Return empty dict.')
             return {}
 
         # if a comment record, add to bib_database.comments
         if record.lower().startswith('@comment'):
-            logger.debug('The record startswith @comment')
-            logger.debug('Store comment in list of comments')
+#             logger.debug('The record startswith @comment')
+#             logger.debug('Store comment in list of comments')
 
             self.bib_database.comments.append(re.search('\{(.*)\}', record, re.DOTALL).group(1))
 
-            logger.debug('Return an empty dict')
+#             logger.debug('Return an empty dict')
             return {}
 
         # if a preamble record, add to bib_database.preambles
         if record.lower().startswith('@preamble'):
-            logger.debug('The record startswith @preamble')
-            logger.debug('Store preamble in list of preambles')
+#             logger.debug('The record startswith @preamble')
+#             logger.debug('Store preamble in list of preambles')
 
             self.bib_database.preambles.append(re.search('\{(.*)\}', record, re.DOTALL).group(1))
 
-            logger.debug('Return an empty dict')
+#             logger.debug('Return an empty dict')
             return {}
 
         # prepare record
         record = '\n'.join([i.strip() for i in record.split('\n')])
         if '}\n' in record:
-            logger.debug('}\\n detected in the record. Clean up.')
+#             logger.debug('}\\n detected in the record. Clean up.')
             record = record.replace('\r\n', '\n').replace('\r', '\n').rstrip('\n')
             # treat the case for which the last line of the record
-            # does not have a coma
+            # does not have a comma
             if record.endswith('}\n}') or record.endswith('}}'):
-                logger.debug('Missing coma in the last line of the record. Fix it.')
+#                 logger.debug('Missing comma in the last line of the record. Fix it.')
                 record = re.sub('}(\n|)}$', '},\n}', record)
 
         # if a string record, put it in the replace_dict
         if record.lower().startswith('@string'):
-            logger.debug('The record startswith @string')
+#             logger.debug('The record startswith @string')
             key, val = [i.strip().strip('{').strip('}').replace('\n', ' ') for i in record.split('{', 1)[1].strip('\n').strip(',').strip('}').split('=')]
             key = key.lower()  # key is case insensitive
             val = self._string_subst_partial(val)
@@ -231,82 +245,82 @@ class BibTexParser(object):
                 self.bib_database.strings[key] = val.strip('"')
             else:
                 self.bib_database.strings[key] = self.bib_database.strings[val.lower()]
-            logger.debug('Return a dict')
+#             logger.debug('Return a dict')
             return d
 
+#         logger.debug('Inspect: %s', kv)
+        if record.startswith('@'):
+            # it is the start of the record - set the bibtype and citekey (bibid)
+#             logger.debug('Line starts with @ and the key is not stored yet.')
+            bibtype, record = record.split('{', 1)
+            bibtype = self._add_key(bibtype)
+#             logger.debug('bibtype = %s', bibtype)
+            
+            if self.ignore_nonstandard_types and bibtype not in self.standard_bibtypes:
+#                 logger.warning('Entry type %s not standard. Not considered.', bibtype)
+                return d
+
+            bibid, record = record.split(',', 1)
+            bibid = bibid.lstrip().strip('}').strip(',')
+#             logger.debug('bibid = %s', bibid)
+
+            record = record.strip().rstrip('}').rstrip(',')
+        else:
+            return d
+            
         # for each line in record
         logger.debug('Split the record of its lines and treat them')
+        #TODO: 
         kvs = [i.strip() for i in re.split(',\s*\n|\n\s*,', record)]
         inkey = ""
         inval = ""
+        
         for kv in kvs:
-            logger.debug('Inspect: %s', kv)
-            # TODO: We may check that the keyword belongs to a known type
-            if kv.startswith('@') and not inkey:
-                # it is the start of the record - set the bibtype and citekey (id)
-                logger.debug('Line starts with @ and the key is not stored yet.')
-                bibtype, id = kv.split('{', 1)
-                bibtype = self._add_key(bibtype)
-                id = id.lstrip().strip('}').strip(',')
-                logger.debug('bibtype = %s', bibtype)
-                logger.debug('id = %s', id)
-                if self.ignore_nonstandard_types and bibtype not in ('article',
-                                                                     'book',
-                                                                     'booklet',
-                                                                     'conference',
-                                                                     'inbook',
-                                                                     'incollection',
-                                                                     'inproceedings',
-                                                                     'manual',
-                                                                     'mastersthesis',
-                                                                     'misc',
-                                                                     'phdthesis',
-                                                                     'proceedings',
-                                                                     'techreport',
-                                                                     'unpublished'):
-                    logger.warning('Entry type %s not standard. Not considered.', bibtype)
-                    break
-            elif '=' in kv and not inkey:
+            if '=' in kv and not inkey:
                 # it is a line with a key value pair on it
-                logger.debug('Line contains a key-pair value and the key is not stored yet.')
+#                 logger.debug('Line contains a key-pair value and the key is not stored yet.')
                 key, val = [i.strip() for i in kv.split('=', 1)]
                 key = self._add_key(key)
                 val = self._string_subst_partial(val)
                 # if it looks like the value spans lines, store details for next loop
                 if (val.count('{') != val.count('}')) or (val.startswith('"') and not val.replace('}', '').endswith('"')):
-                    logger.debug('The line is not ending the record.')
+#                     logger.debug('The line is not ending the record.')
                     inkey = key
                     inval = val
+                elif d.has_key(key) and key in self.multi_keys:
+#                     logger.debug('The line is a multi-key.')                    
+                    d[key] += self.multi_keys_sep[key] + self._add_val(val)
                 else:
-                    logger.debug('The line is the end of the record.')
+#                     logger.debug('The line is the end of the record.')
                     d[key] = self._add_val(val)
             elif inkey:
-                logger.debug('Continues the previous line to complete the key pair value...')
+#                 logger.debug('Continues the previous line to complete the key pair value...')
                 # if this line continues the value from a previous line, append
                 inval += ', ' + kv
                 # if it looks like this line finishes the value, store it and clear for next loop
                 if (inval.startswith('{') and inval.endswith('}')) or (inval.startswith('"') and inval.endswith('"')):
-                    logger.debug('This line represents the end of the current key-pair value')
+#                     logger.debug('This line represents the end of the current key-pair value')
                     d[inkey] = self._add_val(inval)
                     inkey = ""
                     inval = ""
                 else:
-                    logger.debug('This line does NOT represent the end of the current key-pair value')
+#                     logger.debug('This line does NOT represent the end of the current key-pair value')
+                    pass
 
-        logger.debug('All lines have been treated')
+#         logger.debug('All lines have been treated')
         if not d:
-            logger.debug('The dict is empty, return it.')
+#             logger.debug('The dict is empty, return it.')
             return d
 
         d['ENTRYTYPE'] = bibtype
-        d['ID'] = id
+        d['ID'] = bibid
 
         if customization is None:
-            logger.debug('No customization to apply, return dict')
+#             logger.debug('No customization to apply, return dict')
             return d
         else:
             # apply any customizations to the record object then return it
-            logger.debug('Apply customizations and return dict')
+#             logger.debug('Apply customizations and return dict')
             return customization(d)
 
     def _strip_quotes(self, val):
